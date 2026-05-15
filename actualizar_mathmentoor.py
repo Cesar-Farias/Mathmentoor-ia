@@ -1,20 +1,19 @@
+cat > actualizar_mathmentor.py <<'PY'
 from pathlib import Path
 import textwrap
 
 ROOT = Path.cwd()
 
-
-def write_file(path: str, content: str):
+def wf(path, content):
     file_path = ROOT / path
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(textwrap.dedent(content).strip() + "\n", encoding="utf-8")
-
 
 # ============================================================
 # REQUIREMENTS
 # ============================================================
 
-write_file("requirements.txt", """
+wf("requirements.txt", r'''
 fastapi
 uvicorn
 pydantic
@@ -23,31 +22,27 @@ python-dotenv
 openai
 PyPDF2
 python-docx
-""")
+''')
 
-write_file(".env.example", """
+wf(".env.example", r'''
 OPENAI_API_KEY=tu_api_key_aqui
 DATABASE_URL=tutormath.db
-""")
+''')
 
-# ============================================================
-# BACKEND INIT FILES
-# ============================================================
-
-for init_file in [
+for path in [
     "backend/__init__.py",
     "backend/database/__init__.py",
     "backend/routes/__init__.py",
     "backend/services/__init__.py",
     "backend/model/__init__.py",
 ]:
-    write_file(init_file, "")
+    wf(path, "")
 
 # ============================================================
 # DATABASE
 # ============================================================
 
-write_file("backend/database/db.py", r"""
+wf("backend/database/db.py", r'''
 import sqlite3
 from pathlib import Path
 
@@ -60,85 +55,107 @@ def get_connection():
     return conn
 
 
+def column_exists(cursor, table, column):
+    cursor.execute(f"PRAGMA table_info({table})")
+    return column in [row[1] for row in cursor.fetchall()]
+
+
+def add_column_if_missing(cursor, table, column, definition):
+    if not column_exists(cursor, table, column):
+        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
 def init_db():
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        "CREATE TABLE IF NOT EXISTS users ("
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "name TEXT NOT NULL,"
-        "email TEXT UNIQUE NOT NULL,"
-        "password TEXT NOT NULL,"
-        "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
+    """)
 
-    cursor.execute(
-        "CREATE TABLE IF NOT EXISTS diagnostics ("
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "user_id INTEGER,"
-        "academic_level TEXT,"
-        "area TEXT,"
-        "topic TEXT,"
-        "score REAL,"
-        "total REAL,"
-        "mastery REAL,"
-        "risk_level TEXT,"
-        "detected_errors TEXT,"
-        "weak_subtopics TEXT,"
-        "weekly_hours REAL,"
-        "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS diagnostics (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        academic_level TEXT,
+        area TEXT,
+        topic TEXT,
+        score REAL,
+        total REAL,
+        mastery REAL,
+        risk_level TEXT,
+        detected_errors TEXT,
+        weak_subtopics TEXT,
+        weekly_hours REAL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
+    """)
 
-    cursor.execute(
-        "CREATE TABLE IF NOT EXISTS kpis ("
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "user_id INTEGER,"
-        "topic TEXT,"
-        "area TEXT,"
-        "initial_mastery REAL,"
-        "current_mastery REAL,"
-        "target_mastery REAL,"
-        "weekly_hours REAL,"
-        "estimated_weeks INTEGER,"
-        "risk_level TEXT,"
-        "status TEXT,"
-        "pending_topics TEXT,"
-        "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS kpis (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        topic TEXT,
+        area TEXT,
+        initial_mastery REAL,
+        current_mastery REAL,
+        target_mastery REAL,
+        weekly_hours REAL,
+        estimated_weeks INTEGER,
+        risk_level TEXT,
+        status TEXT,
+        pending_topics TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
+    """)
 
-    cursor.execute(
-        "CREATE TABLE IF NOT EXISTS learning_history ("
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "user_id INTEGER,"
-        "mode TEXT,"
-        "topic TEXT,"
-        "question TEXT,"
-        "answer TEXT,"
-        "affects_kpi INTEGER DEFAULT 0,"
-        "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS learning_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        mode TEXT,
+        topic TEXT,
+        question TEXT,
+        answer TEXT,
+        affects_kpi INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
+    """)
 
-    cursor.execute(
-        "CREATE TABLE IF NOT EXISTS teacher_materials ("
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "user_id INTEGER,"
-        "filename TEXT,"
-        "content_type TEXT,"
-        "extracted_text TEXT,"
-        "summary TEXT,"
-        "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS teacher_materials (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        filename TEXT,
+        content_type TEXT,
+        extracted_text TEXT,
+        summary TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
+    """)
+
+    # Compatibilidad si ya existían tablas antiguas
+    add_column_if_missing(cursor, "diagnostics", "total", "REAL")
+    add_column_if_missing(cursor, "diagnostics", "weak_subtopics", "TEXT")
+    add_column_if_missing(cursor, "kpis", "area", "TEXT")
+    add_column_if_missing(cursor, "kpis", "risk_level", "TEXT")
+    add_column_if_missing(cursor, "kpis", "pending_topics", "TEXT")
 
     conn.commit()
     conn.close()
-""")
+''')
 
 # ============================================================
 # AI SERVICE
 # ============================================================
 
-write_file("backend/services/ai_service.py", r"""
+wf("backend/services/ai_service.py", r'''
 import os
 import json
 
@@ -161,9 +178,9 @@ def generate_ai_response(system_prompt: str, user_prompt: str):
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
+                {"role": "user", "content": user_prompt},
             ],
-            temperature=0.6
+            temperature=0.6,
         )
 
         return response.choices[0].message.content
@@ -190,13 +207,13 @@ def generate_ai_json(system_prompt: str, user_prompt: str):
 
     except Exception:
         return None
-""")
+''')
 
 # ============================================================
 # AUTH
 # ============================================================
 
-write_file("backend/services/auth_service.py", r"""
+wf("backend/services/auth_service.py", r'''
 from database.db import get_connection
 
 
@@ -207,26 +224,21 @@ def register_user(name: str, email: str, password: str):
     try:
         cursor.execute(
             "INSERT INTO users (name, email, password) VALUES (?, ?, ?)",
-            (name, email, password)
+            (name, email, password),
         )
-
         conn.commit()
         user_id = cursor.lastrowid
 
         return {
             "success": True,
             "message": "Usuario registrado correctamente.",
-            "user": {
-                "id": user_id,
-                "name": name,
-                "email": email
-            }
+            "user": {"id": user_id, "name": name, "email": email},
         }
 
     except Exception:
         return {
             "success": False,
-            "message": "El correo ya está registrado."
+            "message": "El correo ya está registrado.",
         }
 
     finally:
@@ -239,23 +251,17 @@ def login_user(email: str, password: str):
 
     cursor.execute(
         "SELECT id, name, email, password FROM users WHERE email = ?",
-        (email,)
+        (email,),
     )
 
     user = cursor.fetchone()
     conn.close()
 
     if not user:
-        return {
-            "success": False,
-            "message": "Usuario no encontrado."
-        }
+        return {"success": False, "message": "Usuario no encontrado."}
 
     if user["password"] != password:
-        return {
-            "success": False,
-            "message": "Contraseña incorrecta."
-        }
+        return {"success": False, "message": "Contraseña incorrecta."}
 
     return {
         "success": True,
@@ -263,12 +269,12 @@ def login_user(email: str, password: str):
         "user": {
             "id": user["id"],
             "name": user["name"],
-            "email": user["email"]
-        }
+            "email": user["email"],
+        },
     }
-""")
+''')
 
-write_file("backend/routes/auth_routes.py", r"""
+wf("backend/routes/auth_routes.py", r'''
 from fastapi import APIRouter
 from pydantic import BaseModel
 from services.auth_service import register_user, login_user
@@ -295,13 +301,13 @@ def register(data: RegisterRequest):
 @router.post("/login")
 def login(data: LoginRequest):
     return login_user(data.email, data.password)
-""")
+''')
 
 # ============================================================
 # DIAGNOSTIC
 # ============================================================
 
-write_file("backend/services/diagnostic_service.py", r"""
+wf("backend/services/diagnostic_service.py", r'''
 from database.db import get_connection
 from services.ai_service import generate_ai_json
 
@@ -313,7 +319,7 @@ SUBTOPICS_BY_AREA = {
         "Factorización",
         "Sistemas de ecuaciones",
         "Funciones",
-        "Trigonometría"
+        "Trigonometría",
     ],
     "Cálculo diferencial": [
         "Todos",
@@ -321,7 +327,7 @@ SUBTOPICS_BY_AREA = {
         "Continuidad",
         "Derivadas",
         "Regla de la cadena",
-        "Optimización"
+        "Optimización",
     ],
     "Cálculo integral": [
         "Todos",
@@ -329,7 +335,7 @@ SUBTOPICS_BY_AREA = {
         "Sustitución",
         "Integración por partes",
         "Fracciones parciales",
-        "Volúmenes de revolución"
+        "Volúmenes de revolución",
     ],
     "Cálculo multivariable": [
         "Todos",
@@ -338,7 +344,7 @@ SUBTOPICS_BY_AREA = {
         "Gradiente",
         "Plano tangente",
         "Integrales dobles",
-        "Integrales triples"
+        "Integrales triples",
     ],
     "Cálculo vectorial": [
         "Todos",
@@ -347,7 +353,7 @@ SUBTOPICS_BY_AREA = {
         "Integrales de superficie",
         "Teorema de Green",
         "Teorema de Gauss",
-        "Teorema de Stokes"
+        "Teorema de Stokes",
     ],
     "Ecuaciones diferenciales": [
         "Todos",
@@ -355,34 +361,31 @@ SUBTOPICS_BY_AREA = {
         "EDO lineales de primer orden",
         "Factor integrante",
         "EDO de segundo orden",
-        "Modelos aplicados"
-    ]
+        "Modelos aplicados",
+    ],
 }
 
 
 def normalize_hours(weekly_hours: float):
     if weekly_hours < 1:
         return 1
-
     if weekly_hours > 40:
         return 40
-
     return weekly_hours
 
 
 def difficulty_profile(academic_level: str):
     if "Nivelación" in academic_level:
         return "básica y media"
-
     if "Segundo" in academic_level:
         return "media y avanzada"
-
     return "básica, media y algunas avanzadas"
 
 
 def calculate_time_minutes(academic_level: str, questions: list):
     advanced_count = sum(
-        1 for q in questions
+        1
+        for q in questions
         if q.get("difficulty") == "avanzada" or q.get("requires_upload")
     )
 
@@ -410,13 +413,13 @@ def fallback_questions(area: str, topic: str, academic_level: str):
                 "Concepto correcto",
                 "Concepto no relacionado",
                 "Procedimiento inverso",
-                "Ninguna de las anteriores"
+                "Ninguna de las anteriores",
             ],
             "correct": "Concepto correcto",
             "difficulty": "basica",
             "skill": "Concepto base",
             "weight": 1,
-            "requires_upload": False
+            "requires_upload": False,
         },
         {
             "id": 2,
@@ -425,13 +428,13 @@ def fallback_questions(area: str, topic: str, academic_level: str):
                 "Método adecuado",
                 "Método no aplicable",
                 "Ensayo aleatorio",
-                "No se puede resolver"
+                "No se puede resolver",
             ],
             "correct": "Método adecuado",
             "difficulty": "media",
             "skill": "Selección de método",
             "weight": 2,
-            "requires_upload": False
+            "requires_upload": False,
         },
         {
             "id": 3,
@@ -440,13 +443,13 @@ def fallback_questions(area: str, topic: str, academic_level: str):
                 "Afirmación correcta",
                 "Afirmación incompleta",
                 "Afirmación falsa",
-                "Afirmación contradictoria"
+                "Afirmación contradictoria",
             ],
             "correct": "Afirmación correcta",
             "difficulty": "media",
             "skill": "Interpretación conceptual",
             "weight": 2,
-            "requires_upload": False
+            "requires_upload": False,
         },
         {
             "id": 4,
@@ -455,13 +458,13 @@ def fallback_questions(area: str, topic: str, academic_level: str):
                 "Resultado correcto",
                 "Resultado con error de signo",
                 "Resultado incompleto",
-                "Resultado fuera de contexto"
+                "Resultado fuera de contexto",
             ],
             "correct": "Resultado correcto",
             "difficulty": "media",
             "skill": "Aplicación",
             "weight": 2,
-            "requires_upload": False
+            "requires_upload": False,
         },
         {
             "id": 5,
@@ -470,14 +473,14 @@ def fallback_questions(area: str, topic: str, academic_level: str):
                 "Procedimiento correcto",
                 "Error de método",
                 "Error algebraico",
-                "No corresponde"
+                "No corresponde",
             ],
             "correct": "Procedimiento correcto",
             "difficulty": "avanzada",
             "skill": "Desarrollo avanzado",
             "weight": 3,
-            "requires_upload": True
-        }
+            "requires_upload": True,
+        },
     ]
 
     return questions
@@ -535,7 +538,7 @@ Devuelve:
             "academic_level": data.academic_level,
             "weekly_hours": weekly_hours,
             "time_minutes": calculate_time_minutes(data.academic_level, questions),
-            "questions": questions
+            "questions": questions,
         }
 
     questions = fallback_questions(data.area, data.topic, data.academic_level)
@@ -546,7 +549,7 @@ Devuelve:
         "academic_level": data.academic_level,
         "weekly_hours": weekly_hours,
         "time_minutes": calculate_time_minutes(data.academic_level, questions),
-        "questions": questions
+        "questions": questions,
     }
 
 
@@ -579,7 +582,7 @@ def estimate_weeks(current_mastery: float, target_mastery: float, weekly_hours: 
         "Cálculo integral": 1.4,
         "Cálculo multivariable": 1.7,
         "Cálculo vectorial": 1.8,
-        "Ecuaciones diferenciales": 1.9
+        "Ecuaciones diferenciales": 1.9,
     }.get(area, 1.3)
 
     gap = max(target_mastery - current_mastery, 1)
@@ -623,10 +626,12 @@ def evaluate_diagnostic(data):
     cursor = conn.cursor()
 
     cursor.execute(
-        "INSERT INTO diagnostics "
-        "(user_id, academic_level, area, topic, score, total, mastery, risk_level, "
-        "detected_errors, weak_subtopics, weekly_hours) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        """
+        INSERT INTO diagnostics
+        (user_id, academic_level, area, topic, score, total, mastery, risk_level,
+         detected_errors, weak_subtopics, weekly_hours)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
         (
             data.user_id,
             data.academic_level,
@@ -638,8 +643,8 @@ def evaluate_diagnostic(data):
             risk,
             ", ".join(detected_errors),
             ", ".join(weak_subtopics),
-            weekly_hours
-        )
+            weekly_hours,
+        ),
     )
 
     conn.commit()
@@ -661,7 +666,7 @@ def evaluate_diagnostic(data):
             f"Tu dominio actual es {mastery}%. "
             f"Se recomienda una meta de {target}% en aproximadamente {weeks} semanas, "
             f"estudiando {weekly_hours} horas semanales."
-        )
+        ),
     }
 
 
@@ -675,10 +680,12 @@ def create_kpi(data):
     cursor = conn.cursor()
 
     cursor.execute(
-        "INSERT INTO kpis "
-        "(user_id, topic, area, initial_mastery, current_mastery, target_mastery, "
-        "weekly_hours, estimated_weeks, risk_level, status, pending_topics) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        """
+        INSERT INTO kpis
+        (user_id, topic, area, initial_mastery, current_mastery, target_mastery,
+         weekly_hours, estimated_weeks, risk_level, status, pending_topics)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
         (
             data.user_id,
             data.topic,
@@ -690,8 +697,8 @@ def create_kpi(data):
             data.estimated_weeks,
             risk,
             "En progreso",
-            ""
-        )
+            "",
+        ),
     )
 
     conn.commit()
@@ -701,18 +708,18 @@ def create_kpi(data):
     return {
         "success": True,
         "message": "KPI creado correctamente.",
-        "kpi_id": kpi_id
+        "kpi_id": kpi_id,
     }
-""")
+''')
 
-write_file("backend/routes/diagnostic_routes.py", r"""
+wf("backend/routes/diagnostic_routes.py", r'''
 from fastapi import APIRouter
 from pydantic import BaseModel
 from services.diagnostic_service import (
     SUBTOPICS_BY_AREA,
     generate_ai_test,
     evaluate_diagnostic,
-    create_kpi
+    create_kpi,
 )
 
 router = APIRouter()
@@ -764,19 +771,19 @@ def submit(data: SubmitDiagnosticRequest):
 @router.post("/create-kpi")
 def create(data: CreateKPIRequest):
     return create_kpi(data)
-""")
+''')
 
 # ============================================================
 # CHATBOT
 # ============================================================
 
-write_file("backend/services/chatbot_service.py", r"""
+wf("backend/services/chatbot_service.py", r'''
 from database.db import get_connection
 from services.ai_service import generate_ai_response
 
 
 def fallback_math_response(message: str):
-    return f'''
+    return f"""
 Vamos a trabajarlo como tutor matemático.
 
 1. Primero identificamos el tipo de problema.
@@ -799,11 +806,11 @@ Tu consulta fue:
 {message}
 
 Puedo ayudarte mejor si me escribes el ejercicio completo o subes tu desarrollo.
-'''
+"""
 
 
 def generate_chatbot_response(user_id: int, message: str, topic: str = "", mode: str = "libre"):
-    system_prompt = '''
+    system_prompt = """
 Eres Mathmentor IA, un tutor experto en matemáticas universitarias para estudiantes de ingeniería hasta segundo año.
 No entregues solo tips.
 Debes resolver, explicar y enseñar paso a paso.
@@ -815,7 +822,7 @@ Siempre que corresponda, indica:
 - ejercicio similar para practicar.
 Puedes corregir procedimientos y generar ejercicios.
 El aprendizaje libre no debe afectar KPIs.
-'''
+"""
 
     ai_answer = generate_ai_response(system_prompt, message)
     answer = ai_answer if ai_answer else fallback_math_response(message)
@@ -824,9 +831,11 @@ El aprendizaje libre no debe afectar KPIs.
     cursor = conn.cursor()
 
     cursor.execute(
-        "INSERT INTO learning_history (user_id, mode, topic, question, answer, affects_kpi) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (user_id, mode, topic, message, answer, 0)
+        """
+        INSERT INTO learning_history (user_id, mode, topic, question, answer, affects_kpi)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (user_id, mode, topic, message, answer, 0),
     )
 
     conn.commit()
@@ -835,11 +844,11 @@ El aprendizaje libre no debe afectar KPIs.
     return {
         "message": message,
         "response": answer,
-        "affects_kpi": False
+        "affects_kpi": False,
     }
-""")
+''')
 
-write_file("backend/routes/chatbot_routes.py", r"""
+wf("backend/routes/chatbot_routes.py", r'''
 from fastapi import APIRouter
 from pydantic import BaseModel
 from services.chatbot_service import generate_chatbot_response
@@ -860,15 +869,15 @@ def chatbot(data: ChatbotRequest):
         data.user_id,
         data.message,
         data.topic or "",
-        data.mode or "libre"
+        data.mode or "libre",
     )
-""")
+''')
 
 # ============================================================
 # LEARNING
 # ============================================================
 
-write_file("backend/services/learning_service.py", r"""
+wf("backend/services/learning_service.py", r'''
 from database.db import get_connection
 from services.ai_service import generate_ai_json
 
@@ -883,7 +892,7 @@ def fallback_plan(area: str, topic: str, mastery: float, target: float):
         "Métodos principales",
         "Ejemplo desarrollado",
         "Ejercicios de práctica",
-        "Evaluación del tema"
+        "Evaluación del tema",
     ]
 
     return {
@@ -902,28 +911,28 @@ def fallback_plan(area: str, topic: str, mastery: float, target: float):
                     {
                         "step": 1,
                         "what": "Identificar el tipo de ejercicio.",
-                        "why": "Permite elegir el método correcto."
+                        "why": "Permite elegir el método correcto.",
                     },
                     {
                         "step": 2,
                         "what": "Aplicar el procedimiento correspondiente.",
-                        "why": "Se usa porque responde a la estructura del problema."
+                        "why": "Se usa porque responde a la estructura del problema.",
                     },
                     {
                         "step": 3,
                         "what": "Comprobar el resultado.",
-                        "why": "Ayuda a detectar errores de cálculo o interpretación."
-                    }
+                        "why": "Ayuda a detectar errores de cálculo o interpretación.",
+                    },
                 ],
                 "practice": [
                     f"Ejercicio 1 de {topic}",
                     f"Ejercicio 2 de {topic}",
-                    f"Ejercicio 3 de {topic}"
+                    f"Ejercicio 3 de {topic}",
                 ],
-                "evaluation": "Mini evaluación para avanzar."
+                "evaluation": "Mini evaluación para avanzar.",
             }
             for module in modules
-        ]
+        ],
     }
 
 
@@ -936,7 +945,7 @@ def generate_guided_plan(data):
         "Genera rutas de estudio personalizadas en JSON válido."
     )
 
-    user_prompt = f'''
+    user_prompt = f"""
 Crea una ruta guiada de aprendizaje.
 
 Área: {data.area}
@@ -959,7 +968,7 @@ Devuelve:
   "target_mastery": {target},
   "modules": []
 }}
-'''
+"""
 
     ai_plan = generate_ai_json(system_prompt, user_prompt)
 
@@ -979,7 +988,7 @@ def evaluate_topic(user_id: int, topic: str, subtopic: str, score: float, kpi_id
         if approved:
             cursor.execute(
                 "UPDATE kpis SET current_mastery = MIN(current_mastery + 8, target_mastery) WHERE id = ?",
-                (kpi_id,)
+                (kpi_id,),
             )
         else:
             cursor.execute("SELECT pending_topics FROM kpis WHERE id = ?", (kpi_id,))
@@ -988,7 +997,7 @@ def evaluate_topic(user_id: int, topic: str, subtopic: str, score: float, kpi_id
             updated = previous + f"{subtopic}; "
             cursor.execute(
                 "UPDATE kpis SET pending_topics = ?, status = ? WHERE id = ?",
-                (updated, "Con temas pendientes", kpi_id)
+                (updated, "Con temas pendientes", kpi_id),
             )
 
     conn.commit()
@@ -1001,7 +1010,7 @@ def evaluate_topic(user_id: int, topic: str, subtopic: str, score: float, kpi_id
             "Tema dominado. Puedes avanzar."
             if approved
             else "Tema pendiente. Puedes repasar o avanzar, pero quedará marcado."
-        )
+        ),
     }
 
 
@@ -1010,18 +1019,22 @@ def get_history(user_id: int):
     cursor = conn.cursor()
 
     cursor.execute(
-        "SELECT mode, topic, question, answer, affects_kpi, created_at "
-        "FROM learning_history WHERE user_id = ? ORDER BY created_at DESC",
-        (user_id,)
+        """
+        SELECT mode, topic, question, answer, affects_kpi, created_at
+        FROM learning_history
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+        """,
+        (user_id,),
     )
 
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
 
     return rows
-""")
+''')
 
-write_file("backend/routes/learning_routes.py", r"""
+wf("backend/routes/learning_routes.py", r'''
 from fastapi import APIRouter
 from pydantic import BaseModel
 from services.learning_service import generate_guided_plan, evaluate_topic, get_history
@@ -1058,13 +1071,13 @@ def evaluate(data: EvaluationRequest):
 @router.get("/history/{user_id}")
 def history(user_id: int):
     return get_history(user_id)
-""")
+''')
 
 # ============================================================
 # TEACHER MODE
 # ============================================================
 
-write_file("backend/services/teacher_mode_service.py", r"""
+wf("backend/services/teacher_mode_service.py", r'''
 from database.db import get_connection
 from services.ai_service import generate_ai_json
 
@@ -1126,7 +1139,7 @@ def fallback_analysis(text: str):
         "difficulty": "media",
         "exercise_types": ["cálculo", "desarrollo", "aplicación"],
         "preferred_methods": ["procedimiento ordenado", "verificación del resultado"],
-        "recommendations": ["Practicar ejercicios similares", "Crear simulacro de mayor dificultad"]
+        "recommendations": ["Practicar ejercicios similares", "Crear simulacro de mayor dificultad"],
     }
 
 
@@ -1143,9 +1156,11 @@ async def upload_multiple_materials(user_id: int, files):
         saved_files.append(file.filename)
 
         cursor.execute(
-            "INSERT INTO teacher_materials (user_id, filename, content_type, extracted_text, summary) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (user_id, file.filename, file.content_type, text[:4000], "Material subido")
+            """
+            INSERT INTO teacher_materials (user_id, filename, content_type, extracted_text, summary)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (user_id, file.filename, file.content_type, text[:4000], "Material subido"),
         )
 
     conn.commit()
@@ -1156,7 +1171,7 @@ async def upload_multiple_materials(user_id: int, files):
         "Analiza el material y devuelve JSON válido."
     )
 
-    user_prompt = f'''
+    user_prompt = f"""
 Analiza el siguiente material de clases:
 
 {combined_text[:12000]}
@@ -1172,7 +1187,7 @@ Devuelve JSON:
   "preferred_methods": [],
   "recommendations": []
 }}
-'''
+"""
 
     analysis = generate_ai_json(system_prompt, user_prompt) or fallback_analysis(combined_text)
 
@@ -1180,7 +1195,7 @@ Devuelve JSON:
         "success": True,
         "files": saved_files,
         "analysis": analysis,
-        "combined_text_preview": combined_text[:1200]
+        "combined_text_preview": combined_text[:1200],
     }
 
 
@@ -1188,20 +1203,22 @@ def generate_exercises_from_material(topic: str, difficulty: str, quantity: int)
     exercises = []
 
     for i in range(1, quantity + 1):
-        exercises.append({
-            "number": i,
-            "statement": f"Ejercicio {i} de {topic} con dificultad {difficulty}.",
-            "difficulty": difficulty,
-            "skill": "Aplicación del método del profesor",
-            "suggested_method": "Resolver paso a paso según el material subido.",
-            "solution_available": True
-        })
+        exercises.append(
+            {
+                "number": i,
+                "statement": f"Ejercicio {i} de {topic} con dificultad {difficulty}.",
+                "difficulty": difficulty,
+                "skill": "Aplicación del método del profesor",
+                "suggested_method": "Resolver paso a paso según el material subido.",
+                "solution_available": True,
+            }
+        )
 
     return {
         "topic": topic,
         "difficulty": difficulty,
         "quantity": quantity,
-        "exercises": exercises
+        "exercises": exercises,
     }
 
 
@@ -1215,26 +1232,26 @@ def generate_mock_test(topic: str, difficulty: str, quantity: int, duration: int
             "Desarrollo ordenado",
             "Justificación del método",
             "Resultado correcto",
-            "Interpretación"
+            "Interpretación",
         ],
         "questions": [
             {
                 "number": i,
                 "statement": f"Pregunta {i} de simulacro avanzado sobre {topic}.",
                 "points": 5 if i == quantity else 3,
-                "type": "desarrollo" if i == quantity else "mixta"
+                "type": "desarrollo" if i == quantity else "mixta",
             }
             for i in range(1, quantity + 1)
-        ]
+        ],
     }
-""")
+''')
 
-write_file("backend/routes/teacher_mode_routes.py", r"""
+wf("backend/routes/teacher_mode_routes.py", r'''
 from fastapi import APIRouter, UploadFile, File, Form
 from services.teacher_mode_service import (
     upload_multiple_materials,
     generate_exercises_from_material,
-    generate_mock_test
+    generate_mock_test,
 )
 
 router = APIRouter()
@@ -1243,7 +1260,7 @@ router = APIRouter()
 @router.post("/upload")
 async def upload(
     user_id: int = Form(1),
-    files: list[UploadFile] = File(...)
+    files: list[UploadFile] = File(...),
 ):
     return await upload_multiple_materials(user_id, files)
 
@@ -1256,13 +1273,13 @@ def exercises(topic: str, difficulty: str = "media", quantity: int = 5):
 @router.get("/mock-test")
 def mock_test(topic: str, difficulty: str = "avanzada", quantity: int = 6, duration: int = 45):
     return generate_mock_test(topic, difficulty, quantity, duration)
-""")
+''')
 
 # ============================================================
 # ANALYTICS
 # ============================================================
 
-write_file("backend/services/analytics_service.py", r"""
+wf("backend/services/analytics_service.py", r'''
 from database.db import get_connection
 
 
@@ -1278,21 +1295,25 @@ def get_dashboard(user_id: int):
 
     cursor.execute(
         "SELECT topic, current_mastery FROM kpis WHERE user_id = ? ORDER BY current_mastery ASC LIMIT 1",
-        (user_id,)
+        (user_id,),
     )
     weakest = cursor.fetchone()
 
     cursor.execute(
         "SELECT detected_errors FROM diagnostics WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
-        (user_id,)
+        (user_id,),
     )
     error = cursor.fetchone()
 
     cursor.execute(
-        "SELECT id, topic, area, initial_mastery, current_mastery, target_mastery, "
-        "weekly_hours, estimated_weeks, risk_level, status, pending_topics "
-        "FROM kpis WHERE user_id = ? ORDER BY created_at DESC",
-        (user_id,)
+        """
+        SELECT id, topic, area, initial_mastery, current_mastery, target_mastery,
+               weekly_hours, estimated_weeks, risk_level, status, pending_topics
+        FROM kpis
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+        """,
+        (user_id,),
     )
     kpis = [dict(row) for row in cursor.fetchall()]
 
@@ -1305,9 +1326,9 @@ def get_dashboard(user_id: int):
             "risk": "Alto riesgo" if avg < 40 else "Riesgo medio" if avg < 70 else "Buen avance",
             "weakest_topic": weakest["topic"] if weakest else "Sin datos",
             "most_common_error": error["detected_errors"] if error else "Sin datos",
-            "next_action": "Realiza un diagnóstico o continúa tu ruta guiada."
+            "next_action": "Realiza un diagnóstico o continúa tu ruta guiada.",
         },
-        "kpis": kpis
+        "kpis": kpis,
     }
 
 
@@ -1316,16 +1337,25 @@ def get_learning_analytics(user_id: int):
     cursor = conn.cursor()
 
     cursor.execute(
-        "SELECT area, topic, mastery, risk_level, detected_errors, weak_subtopics, created_at "
-        "FROM diagnostics WHERE user_id = ? ORDER BY created_at DESC",
-        (user_id,)
+        """
+        SELECT area, topic, mastery, risk_level, detected_errors, weak_subtopics, created_at
+        FROM diagnostics
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+        """,
+        (user_id,),
     )
     diagnostics = [dict(row) for row in cursor.fetchall()]
 
     cursor.execute(
-        "SELECT mode, topic, question, answer, created_at "
-        "FROM learning_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 30",
-        (user_id,)
+        """
+        SELECT mode, topic, question, answer, created_at
+        FROM learning_history
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+        LIMIT 30
+        """,
+        (user_id,),
     )
     history = [dict(row) for row in cursor.fetchall()]
 
@@ -1338,11 +1368,11 @@ def get_learning_analytics(user_id: int):
             "Aún no hay suficiente información. Realiza un diagnóstico o crea una ruta guiada."
             if not diagnostics and not history
             else "Analítica generada correctamente."
-        )
+        ),
     }
-""")
+''')
 
-write_file("backend/routes/analytics_routes.py", r"""
+wf("backend/routes/analytics_routes.py", r'''
 from fastapi import APIRouter
 from services.analytics_service import get_dashboard, get_learning_analytics
 
@@ -1357,13 +1387,13 @@ def dashboard(user_id: int):
 @router.get("/learning/{user_id}")
 def learning(user_id: int):
     return get_learning_analytics(user_id)
-""")
+''')
 
 # ============================================================
 # COACH
 # ============================================================
 
-write_file("backend/services/coach_service.py", r"""
+wf("backend/services/coach_service.py", r'''
 import random
 
 MESSAGES = [
@@ -1376,7 +1406,7 @@ MESSAGES = [
     "Las matemáticas se dominan con práctica constante.",
     "“No te preocupes por tus dificultades en matemáticas. Las mías son mayores.” — Albert Einstein",
     "“Las matemáticas son el alfabeto con el cual Dios ha escrito el universo.” — Galileo Galilei",
-    "“La matemática es la reina de las ciencias.” — Carl Friedrich Gauss"
+    "“La matemática es la reina de las ciencias.” — Carl Friedrich Gauss",
 ]
 
 POSITIONS = [
@@ -1385,7 +1415,7 @@ POSITIONS = [
     "bottom-left",
     "bottom-right",
     "middle-left",
-    "middle-right"
+    "middle-right",
 ]
 
 
@@ -1395,11 +1425,11 @@ def get_message(context: str = "general"):
         "message": random.choice(MESSAGES),
         "position": random.choice(POSITIONS),
         "avatar": "🤖",
-        "name": "Coach Mathmentor"
+        "name": "Coach Mathmentor",
     }
-""")
+''')
 
-write_file("backend/routes/coach_routes.py", r"""
+wf("backend/routes/coach_routes.py", r'''
 from fastapi import APIRouter
 from services.coach_service import get_message
 
@@ -1409,13 +1439,13 @@ router = APIRouter()
 @router.get("/message")
 def message(context: str = "general"):
     return get_message(context)
-""")
+''')
 
 # ============================================================
 # MAIN BACKEND
 # ============================================================
 
-write_file("backend/main.py", r"""
+wf("backend/main.py", r'''
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -1431,7 +1461,7 @@ from routes.coach_routes import router as coach_router
 app = FastAPI(
     title="Mathmentor IA API",
     description="API para diagnóstico, KPIs, aprendizaje guiado, modo profesor y analítica.",
-    version="2.0.0"
+    version="2.0.0",
 )
 
 app.add_middleware(
@@ -1457,16 +1487,20 @@ app.include_router(coach_router, prefix="/api/coach", tags=["Coach"])
 def home():
     return {
         "message": "Mathmentor IA API funcionando",
-        "version": "2.0.0"
+        "version": "2.0.0",
     }
-""")
+''')
 
 # ============================================================
-# FRONTEND API
+# FRONTEND FILES
 # ============================================================
 
-write_file("frontend/js/api.js", r"""
-const API_URL = "http://127.0.0.1:8000";
+wf("frontend/js/api.js", r'''
+let API_URL = "http://127.0.0.1:8000";
+
+if (window.location.hostname.includes("github.dev")) {
+  API_URL = window.location.origin.replace("-5500", "-8000");
+}
 
 function getCurrentUserId() {
   const user = JSON.parse(localStorage.getItem("mathmentor_user") || "{}");
@@ -1478,13 +1512,9 @@ function getCurrentUser() {
 }
 
 console.log("API_URL:", API_URL);
-""")
+''')
 
-# ============================================================
-# FRONTEND INDEX
-# ============================================================
-
-write_file("frontend/index.html", r"""
+wf("frontend/index.html", r'''
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -1538,13 +1568,9 @@ write_file("frontend/index.html", r"""
   <script src="js/auth.js"></script>
 </body>
 </html>
-""")
+''')
 
-# ============================================================
-# FRONTEND APP
-# ============================================================
-
-write_file("frontend/app.html", r"""
+wf("frontend/app.html", r'''
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -1559,7 +1585,7 @@ write_file("frontend/app.html", r"""
     <p id="sidebarUser" class="sidebar-user">Estudiante</p>
 
     <nav class="side-nav">
-      <button class="active" onclick="showSection('dashboard')">Dashboard</button>
+      <button onclick="showSection('dashboard')">Dashboard</button>
       <button onclick="showSection('objetivos')">Mis Objetivos</button>
       <button onclick="showSection('diagnostico')">Diagnóstico IA</button>
       <button onclick="showSection('centro')">Centro de Aprendizaje</button>
@@ -1735,13 +1761,9 @@ write_file("frontend/app.html", r"""
   <script src="js/coach.js"></script>
 </body>
 </html>
-""")
+''')
 
-# ============================================================
-# FRONTEND JS
-# ============================================================
-
-write_file("frontend/js/main.js", r"""
+wf("frontend/js/main.js", r'''
 const formulas = [
   "∫ f(x) dx",
   "∇f(x,y)",
@@ -1790,9 +1812,9 @@ function showAuth(type) {
 }
 
 document.addEventListener("DOMContentLoaded", createFormulaRain);
-""")
+''')
 
-write_file("frontend/js/auth.js", r"""
+wf("frontend/js/auth.js", r'''
 const loginForm = document.getElementById("loginForm");
 const registerForm = document.getElementById("registerForm");
 const authMessage = document.getElementById("authMessage");
@@ -1851,9 +1873,9 @@ loginForm.addEventListener("submit", async (event) => {
     authMessage.textContent = "No se pudo conectar con el backend.";
   }
 });
-""")
+''')
 
-write_file("frontend/js/app.js", r"""
+wf("frontend/js/app.js", r'''
 let SUBTOPICS = {};
 
 function requireSession() {
@@ -1929,9 +1951,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   loadDashboard();
   loadCoachMessage();
 });
-""")
+''')
 
-write_file("frontend/js/dashboard.js", r"""
+wf("frontend/js/dashboard.js", r'''
 function kpiBar(kpi) {
   const current = Math.max(0, Math.min(Number(kpi.current_mastery), 100));
   const target = Math.max(0, Math.min(Number(kpi.target_mastery), 100));
@@ -2017,9 +2039,9 @@ async function loadObjectives() {
     </div>
   `).join("");
 }
-""")
+''')
 
-write_file("frontend/js/diagnostic.js", r"""
+wf("frontend/js/diagnostic.js", r'''
 let currentTest = null;
 let lastDiagnostic = null;
 let timerInterval = null;
@@ -2182,9 +2204,9 @@ async function createKPIFromDiagnostic() {
   loadDashboard();
   showSection("dashboard");
 }
-""")
+''')
 
-write_file("frontend/js/learning.js", r"""
+wf("frontend/js/learning.js", r'''
 function clampInput(id) {
   const input = document.getElementById(id);
   let value = Number(input.value);
@@ -2295,9 +2317,9 @@ async function sendChatMessage() {
   chat.innerHTML += `<div class="bot-message">${result.response}</div>`;
   chat.scrollTop = chat.scrollHeight;
 }
-""")
+''')
 
-write_file("frontend/js/teacher-mode.js", r"""
+wf("frontend/js/teacher-mode.js", r'''
 async function uploadTeacherMaterial() {
   const files = document.getElementById("teacherFiles").files;
 
@@ -2376,9 +2398,9 @@ async function generateMockTest() {
     `).join("")}
   `;
 }
-""")
+''')
 
-write_file("frontend/js/analytics.js", r"""
+wf("frontend/js/analytics.js", r'''
 async function loadAnalytics() {
   const response = await fetch(`${API_URL}/api/analytics/learning/${getCurrentUserId()}`);
   const result = await response.json();
@@ -2409,9 +2431,9 @@ async function loadAnalytics() {
     `).join("")}
   `;
 }
-""")
+''')
 
-write_file("frontend/js/coach.js", r"""
+wf("frontend/js/coach.js", r'''
 const positionClasses = [
   "coach-top-left",
   "coach-top-right",
@@ -2444,13 +2466,9 @@ function closeCoach() {
 setInterval(() => {
   loadCoachMessage();
 }, 45000);
-""")
+''')
 
-# ============================================================
-# CSS
-# ============================================================
-
-write_file("frontend/css/styles.css", r"""
+wf("frontend/css/styles.css", r'''
 * {
   margin: 0;
   padding: 0;
@@ -2908,13 +2926,9 @@ label {
     grid-template-columns: 1fr;
   }
 }
-""")
+''')
 
-# ============================================================
-# README
-# ============================================================
-
-write_file("README.md", r"""
+wf("README.md", r'''
 # Mathmentor IA
 
 Mathmentor IA es una plataforma educativa con inteligencia artificial para estudiantes de ingeniería hasta segundo año.
@@ -2941,20 +2955,3 @@ Mathmentor IA es una plataforma educativa con inteligencia artificial para estud
 ```bash
 cd backend
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-## Ejecutar frontend
-
-```bash
-cd frontend
-python -m http.server 5500
-```
-
-## IA real
-
-Si existe `OPENAI_API_KEY`, el sistema usa IA real. Si no existe, usa fallback local.
-""")
-
-print("✅ Mathmentor IA actualizado correctamente.")
-print("✅ Archivos principales sobrescritos sin errores de triple comilla.")
-print("⚠️ Si estás en Codespaces, revisa frontend/js/api.js y coloca la URL pública del puerto 8000.")
